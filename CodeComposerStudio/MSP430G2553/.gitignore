@@ -2,3 +2,8 @@
 .jxbrowser-data/
 .metadata/
 RemoteSystemsTempFiles/
+
+# Project generated files
+*/Debug/
+*/.settings
+*/.launches
