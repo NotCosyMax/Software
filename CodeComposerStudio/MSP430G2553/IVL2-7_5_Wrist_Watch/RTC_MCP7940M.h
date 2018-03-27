@@ -29,8 +29,11 @@ void RTC_getTime(uint8_t* singleMinutes, uint8_t* tensOfMinutes, uint8_t* single
 /* Set the current time of the RTC */
 void RTC_setTime(uint8_t singleMinutes, uint8_t tensOfMinutes, uint8_t singleHours, uint8_t tentsOfHours);
 
-/*Enable the RTC alarm to go of every */
-void RTC_setMinuteAlarm();
+/* Enable the RTC alarm to go of every */
+void RTC_enableMinuteAlarm();
+
+/* Disable the RTC alarm to go of every */
+void RTC_disableMinuteAlarm();
 
 /* Resets the alarm */
 void RTC_resetAlarm();

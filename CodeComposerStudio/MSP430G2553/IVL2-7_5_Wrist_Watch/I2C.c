@@ -41,11 +41,11 @@ void I2C_init(uint32_t clkFrequency, I2C_operationSpeed speed, I2C_mode mode)
 
     /* Set bit rate depending on specified operation speed */
     if (speed == I2C_STANDARD_SPEED) {
-        UCB0BR0 = clkFrequency/100000;      // Set clock speed: fSCL = SMCLK/UCB0BR0 = ~100kHz ...
+        UCB0BR0 = clkFrequency / 100000;      // Set clock speed: fSCL = SMCLK/UCB0BR0 = ~100kHz ...
     }
     else {
         // Wtf is up with the I2C?
-        UCB0BR0 = clkFrequency/400000;      // Set clock speed: fSCL = SMCLK/UCB0BR0 = ~400kHz ...
+        UCB0BR0 = clkFrequency / 400000;      // Set clock speed: fSCL = SMCLK/UCB0BR0 = ~400kHz ...
     }
 
     /* UCB0BR1 can remain at 0 as CPU frequency wont go above 16 Mhz */

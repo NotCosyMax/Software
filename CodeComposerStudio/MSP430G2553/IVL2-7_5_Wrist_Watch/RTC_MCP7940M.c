@@ -42,10 +42,11 @@ void RTC_start()
     /* Read register 0x00 containing ST bit */
     I2C_transfer(RTC_ADDR, sizeof(checkIfRtcIsStarted), (uint8_t *)checkIfRtcIsStarted, 1, rxBuffer);
     /* If bit 7 is set, RTC is already running and we don't need to start it */
-    if (!(rxBuffer[0] & 0x80)) {
+    while (!(rxBuffer[0] & 0x80)) {
         /* Bit 7 was not set, start the RTC by writing bit 7.
            don't preserve the old time as this is already wrong. */
         I2C_transfer(RTC_ADDR, sizeof(startRtc), (uint8_t *)startRtc, 0, rxBuffer);
+        I2C_transfer(RTC_ADDR, sizeof(checkIfRtcIsStarted), (uint8_t *)checkIfRtcIsStarted, 1, rxBuffer);
     }
 }
 
@@ -80,19 +81,13 @@ void RTC_setTime(uint8_t singleMinutes, uint8_t tensOfMinutes, uint8_t singleHou
     I2C_transfer(RTC_ADDR, sizeof(startRtc), (uint8_t *)startRtc, 0, rxBuffer);
 }
 
-/*Enable the RTC alarm to go of every */
-void RTC_setMinuteAlarm()
+/* Enable the RTC alarm to go of every */
+void RTC_enableMinuteAlarm()
 {
     // Disable alarm interrupt
     txBuffer[0] = 0x07; // RTCC CONTROL REGISTER
     txBuffer[1] = 0x80; // Alarm0  enabled
     I2C_transfer(RTC_ADDR, 2,(unsigned char *) txBuffer, 0,(unsigned char *) rxBuffer);
-
-    // Set alarm to go off every minute by ping-pong:ing alarm0 and alarm1:
-    // alarm0 goes of every 1st second of a minute.
-    // alarm1 goes of every 2nd second of a minute.
-    // At alarm0 interrupt, disable alarm0 and reset interrupt flag, enable alarm 1
-    // At alarm1 interrupt, disable alarm1 and reset interrupt flag, enable alarm 0
 
     // Set alarm mask to trigger on minutes
      txBuffer[0] = 0x0A;     // Alarm0 Seconds
@@ -107,52 +102,15 @@ void RTC_setMinuteAlarm()
      txBuffer[0] = 0x07; // RTCC CONTROL REGISTER
      txBuffer[1] = BIT4; // Alarm0  enabled
      I2C_transfer(RTC_ADDR, 2,(unsigned char *) txBuffer, 0,(unsigned char *) rxBuffer);
+}
 
-//     // Set alarm mask to trigger on minutes
-//      txBuffer[0] = 0x011;     // Alarm0 Seconds
-//      txBuffer[1] = 0x30;     // Trigger on seconds roll-over
-//      txBuffer[2] = 0x00;     // Alarm0 Minutes   (N/A)
-//      txBuffer[3] = 0x00;     // Alarm0 Hours     (N/A)
-//      txBuffer[4] = 0x00;     // Alarm0 Seconds Match
-//      txBuffer[5] = 0x00;     // Alarm0 Date      (N/A)
-//      txBuffer[6] = 0x00;     // Alarm0 Month     (N/A)
-//      I2C_transfer(RTC_ADDR, 7,(unsigned char *) &txBuffer, 0,(unsigned char *) &rxBuffer);
-//
-//     // Enable alarm0 interrupt
-//     txBuffer[0] = 0x07; // RTCC CONTROL REGISTER
-//     txBuffer[1] = BIT4; // Alarm0  enabled
-//     I2C_transfer(RTC_ADDR, 2,(unsigned char *) &txBuffer, 0,(unsigned char *) &rxBuffer);
-
-     // Set alarm0 to go of every 1st sdecond, and alarm1 to go of every 30 second, of a minute
-//     txBuffer[0] = 0x0A; // Alarm0
-//     txBuffer[1] = 0x01; // 1st second
-//     I2C_transfer(RTC_ADDR, 2,(unsigned char *) &txBuffer, 0,(unsigned char *) &rxBuffer);
-//     txBuffer[0] = 0x011; // Alarm1
-//     txBuffer[1] = 0x30; // 2nd second
-//     I2C_transfer(RTC_ADDR, 2,(unsigned char *) &txBuffer, 0,(unsigned char *) &rxBuffer);
-
-    // // Enable alarm0 interrupt
-    // txBuffer[0] = 0x07; // RTCC CONTROL REGISTER
-    // txBuffer[1] = BIT4; // Alarm0  enabled
-    // I2C_transfer(RTC_ADDR, 2,(unsigned char *) &txBuffer, 0,(unsigned char *) &rxBuffer);
-
-    // Set alarm mask to trigger on seconds
-//    txBuffer[0] = 0x0D; // Alarm0 Second mask
-//    txBuffer[1] = 0x00;
-//    I2C_transfer(RTC_ADDR, 2,(unsigned char *) &txBuffer, 0,(unsigned char *) &rxBuffer);
-//    txBuffer[0] = 0x014; // Alarm1 Second mask
-//    txBuffer[1] = 0x00;
-//    I2C_transfer(RTC_ADDR, 2,(unsigned char *) &txBuffer, 0,(unsigned char *) &rxBuffer);
-//
-//    // Set alarm0 to go of every 1st second, and alarm1 to go of every 2nd second, of a minute
-//    txBuffer[0] = 0x0A; // Alarm0
-//    txBuffer[1] = BIT0; // 1st second
-//    I2C_transfer(RTC_ADDR, 2,(unsigned char *) &txBuffer, 0,(unsigned char *) &rxBuffer);
-//    txBuffer[0] = 0x011; // Alarm1
-//    txBuffer[1] = 0x30; // 2nd second
-//    I2C_transfer(RTC_ADDR, 2,(unsigned char *) &txBuffer, 0,(unsigned char *) &rxBuffer);
-
-
+/* Disable the RTC alarm to go of every */
+void RTC_disableMinuteAlarm()
+{
+    // Disable alarm interrupt
+    txBuffer[0] = 0x07; // RTCC CONTROL REGISTER
+    txBuffer[1] = 0x80; // Alarm0  enabled
+    I2C_transfer(RTC_ADDR, 2,(unsigned char *) txBuffer, 0,(unsigned char *) rxBuffer);
 }
 
 int alarmToggler = 0;
