@@ -18,6 +18,8 @@
 #define VFD_BLANK   BIT3
 #define VFD_ON      BIT4
 
+#define AUTO_SLEEP_TIMER (2) /* Auto sleep timer in minutes */
+
 /* Enums */
 enum LED {
     RED = BIT5,
@@ -28,6 +30,7 @@ enum LED {
 enum tasks {
     RESET_ALARM     = BIT0,
     WAKE_UP         = BIT1,
+    SLEEP           = BIT2,
 };
 
 const char mappingVFD[10][7] = {
@@ -45,12 +48,14 @@ const char mappingVFD[10][7] = {
 
 unsigned char x[5] = {0};
 uint8_t caseCounter = 0;
+uint8_t inDeepSleep = 0;
 
 /* Functions */
 uint8_t batteryCheck();
 void onWakeUp();
 void onSetTime();
 void onAlarmReset();
+void onSleep();
 void setNewTime();
 uint8_t getButtonPress();
 
@@ -75,6 +80,8 @@ uint8_t rxBuffer[10];
 
 // Current time
 uint8_t currentTime[5] = {0, 0, 0, 0, 0};   // currentTime[0..4] : singleMinutes, tensOfMinutes, Dots, singleHours, tensOfHours
+uint8_t autoSleepTimestamp = 0;
+
 
 char buttonIsPressed = 0;
 int buttonCounter = 0;
@@ -84,10 +91,10 @@ int resetAlarm = 0;
 
 uint8_t inCase = 0;
 
-const uint8_t pwmLED[3] = {3, 0, 3}; // RGB
+const uint8_t pwmLED[3] = {5, 0, 5}; // RGB
 uint8_t pwmLEDCounter[3] = {3, 0, 3}; // RGB
 
-const double batteryLimit = 3.3 / 15.0;
+const double batteryLimit = 3.5; // Set battery limit at 3.5V
 
 unsigned int blinkDigit = 2; // Blink dots by default
 /**
@@ -138,21 +145,21 @@ int main(void)
 
     // Setup ADC
     ADC10CTL1 = INCH_0;                      // A0
-    ADC10CTL0 = SREF_1 + REFON + ADC10SHT_2 + ADC10ON + ADC10SR + ADC10IE;
+    ADC10CTL0 = SREF_1 + REFON + ADC10SHT_3 + ADC10ON + ADC10SR + ADC10IE;
     ADC10AE0 |= BATT_SENSE; // Mux P1.0 to A0
 
 
     // If battery is to bad, don't let the clock start up until it is charged again
-//    while (1) {
-//        if (!batteryCheck()) {
-//            // Battery was not OK, go into deep sleep
-//            __bis_SR_register(LPM4 + GIE);
-//        }
-//        else {
-//            // We are initially OK on with battery, proceed!
-//            break;
-//        }
-//    }
+    while (1) {
+        if (!batteryCheck()) {
+            // Battery was not OK, go into deep sleep
+            __bis_SR_register(LPM4 + GIE);
+        }
+        else {
+            // We are initially OK on battery, proceed!
+            break;
+        }
+    }
 
     // Setup the RTC: SMCLK is running at 16 Mhz
     RTC_init(2000000);
@@ -170,6 +177,8 @@ int main(void)
             // Handle alarm
             case (RESET_ALARM)  :   onAlarmReset();  break;
             case (WAKE_UP)      :   onWakeUp(); break;
+            case (SLEEP)        :   onSleep(); break;
+
             // If no new case, enter LPM
             default             :
                                     // Enter low power mode
@@ -185,9 +194,20 @@ int main(void)
                                         P2OUT &= ~(RED + GREEN + BLUE);
 
                                         // Turn of ADC to save power
+                                        ADC10CTL0 &= ~(ENC);
+
+                                        while ((ADC10CTL0 & ENC)){};
+
                                         ADC10CTL0 &= ~(REFON + ADC10IE + ADC10ON);
 
+                                        // Wait for ADC to turn of
+                                        while ((ADC10CTL0 & REFON)){};
+
+                                        //TA1CCTL0 &= ~CCIE;
+                                        inDeepSleep = 1;
                                         __bis_SR_register(LPM4 + GIE);
+
+                                       // TA1CCTL0 |= CCIE;
 
                                         // Turn ADC back on
                                         ADC10CTL0 |= REFON + ADC10IE + ADC10ON;
@@ -200,15 +220,18 @@ int main(void)
 }
 
 uint8_t batteryCheck() {
+    uint32_t i = 0;
+    // Small delay of 300 us ish
+    for (i = 0; i < 5000; i++) {};
+
     ADC10CTL0 |= ENC + ADC10SC;             // Sampling and conversion start
     __bis_SR_register(CPUOFF + GIE);        // LPM0, ADC10_ISR will force exit
 
-    // If below 3.6V
-    if ((double)(((double) ADC10MEM) * (1.5 / 1024.0) ) < (batteryLimit)) {
+    // If below batteryLimit (voltage scaling factor at ~15), blink the red LEDs and return false
+    if ((double)(((double) ADC10MEM) * (1.5 / 1023.0) * 15 ) < (batteryLimit)) {
         // Blink RED led a few times then go into LPM4
-        uint32_t i = 0;
-        uint8_t j = 0;
-        for (; j < 4; j++) {
+        uint8_t j = 4;
+        for (; j > 0; j--) {
             P2OUT ^= RED;
             // Delay
             for (i = 0; i < 500000; i++) {};
@@ -221,6 +244,8 @@ uint8_t batteryCheck() {
 
 void onAlarmReset()
 {
+    inDeepSleep = 0;
+
     // Increment time if first time we try to clear the alarm (we don't want to count retries)
     if (resetAlarm == 1) {
 
@@ -262,32 +287,53 @@ void onAlarmReset()
             break;
         }
     }while(1);
+
+    // If we reach auto timeout, go back into sleep
+    if (((autoSleepTimestamp <= 7) &&
+        ((currentTime[0] - autoSleepTimestamp) >= 2)) ||
+        ((autoSleepTimestamp > 7) &&
+         (currentTime[0] < 3) &&
+        (((10 - autoSleepTimestamp) + currentTime[0]) >= 2))) {
+        setCase(SLEEP);
+    }
+}
+
+void onSleep()
+{
+    inCase = 1;
+
+    // Turn of everything soo we can go back into sleep
+    P1OUT &= ~(POWER_ON);
+    P2OUT &= ~VFD_ON;
+
+    // Do not do anything else
+    inCase = 0;
 }
 
 void onWakeUp()
 {
     inCase = 1;
+    inDeepSleep = 0;
 
     // Perform a battery check
     if (!batteryCheck()) {
         // Battery was NOT OK, make sure to turn of screen and go back to deep sleep
-        P1OUT &= ~(POWER_ON);
-        P2OUT &= ~VFD_ON;
-
-        // Do not do anything else
-        inCase = 0;
+        setCase(SLEEP);
         return;
     }
 
-    protectI2CInterrupt();
     // If returning from sleep enable alarm again
     if (!(P1OUT & POWER_ON)) {
+        protectI2CInterrupt();
         RTC_enableMinuteAlarm();
+
+        // Reading out the current time from the RTC
+        RTC_getTime(&currentTime[0], &currentTime[1], &currentTime[3], &currentTime[4]);
+        unprotectI2CInterrupt();
+
+        autoSleepTimestamp = currentTime[0];
     }
 
-    // Reading out the current time from the RTC
-    RTC_getTime(&currentTime[0], &currentTime[1], &currentTime[3], &currentTime[4]);
-    unprotectI2CInterrupt();
 
     // Check button press
     char buttonPress = getButtonPress();
@@ -297,8 +343,8 @@ void onWakeUp()
 
         P1OUT |= POWER_ON;
 
-        unsigned int i = 0;
-        for(;i < 65000; i++) {};
+        unsigned int i = 65000;
+        for(;i > 0; i--) {};
 
         // Turn on VFD and regulators
         P2OUT |= VFD_ON;
@@ -315,8 +361,8 @@ void onWakeUp()
         // Toggle screen on or off
         P1OUT ^= POWER_ON;
 
-        unsigned int i = 0;
-        for(;i < 65000; i++) {};
+        unsigned int i = 65000;
+        for(;i > 0; i--) {};
 
         P2OUT ^= VFD_ON;
 
@@ -365,7 +411,7 @@ void setNewTime() {
                 case 4: {
                     // Increment tens hours
                     currentTime[4]++;
-                    if ((currentTime[4] > 2) || (currentTime[3] > 3)) {
+                    if ((currentTime[4] > 2) && (currentTime[3] > 3)) {
                         currentTime[4] = 0;
                     }
                     break;
@@ -388,8 +434,8 @@ void setNewTime() {
         // We are done
         if (step == 5) {
 
-            // Strap the time at 24h
-            if ((currentTime[4] > 2) || (currentTime[3] > 3)) {
+            // Strap the time at 24h format (redundant, should not be needed)
+            if ((currentTime[4] > 2) && (currentTime[3] > 3)) {
                 currentTime[4] = 0;
             }
 
@@ -413,8 +459,8 @@ void onSetTime() {
     // Toggle screen off
     P1OUT ^= POWER_ON;
 
-    unsigned int i = 0;
-    for(;i < 65000; i++) {};
+    unsigned int i = 65000;
+    for(;i > 0; i--) {};
 
     P2OUT ^= VFD_ON;
 
@@ -435,7 +481,7 @@ void onSetTime() {
     // Toggle screen on again
     P1OUT ^= POWER_ON;
 
-    for(i = 0; i < 65000; i++) {};
+    for(i = 65000; i > 0 ; i--) {};
 
     P2OUT ^= VFD_ON;
 
@@ -460,7 +506,6 @@ uint8_t getButtonPress() {
 
 
 int resetAlarmCounter = 0;
-int counter = 0;
 static unsigned char currentGrid = 0;
 unsigned char blinkDots = 1;
 unsigned int  dotCounter = 0;
@@ -606,10 +651,14 @@ __interrupt  void timer1A0ISR(void)
                     LPM0_EXIT;
                 }
             }
-            else
+            else {
                 buttonWasPressed = 0;
+            }
         }
     }
+
+    if (inDeepSleep && !buttonWasPressed && !buttonIsPressed)
+        LPM0_EXIT;
 }
 
 #pragma vector = PORT1_VECTOR
@@ -623,7 +672,7 @@ __interrupt void GPIOPORT1_ISR(void)
         P1IFG &= ~ALARM_INPUT;
         // ... Set next case to handle the alarm
         resetAlarm = 2;
-        P2OUT ^= GREEN;
+        //P2OUT ^= GREEN; // <-- Debug
         LPM0_EXIT;
     }
     if(P1IFG & BUTTON)
